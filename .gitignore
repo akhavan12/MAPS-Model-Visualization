@@ -216,3 +216,14 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Large data files (exceed GitHub's 100MB file limit / not meant for version control)
+*.nc
+maps_output_F1_06_21_2026_kepler.csv
+
+# macOS
+.DS_Store
+
+# viz/lib is our own bundled JS libs (d3, topojson-client), not a Python lib/ build artifact
+!viz/lib/
+!viz/lib/*.js
