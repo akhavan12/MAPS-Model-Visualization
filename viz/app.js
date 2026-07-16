@@ -1,5 +1,5 @@
 (async function () {
-  const ASSET_V = "2"; // bump when frames/meta/topo data change, to bust browser cache
+  const ASSET_V = "4"; // bump when frames/meta/topo data change, to bust browser cache
   const VIEW_W = 1400; // internal SVG coordinate width (view-space, before zoom)
   let VIEW_H;
 
@@ -23,7 +23,8 @@
     fetch(`data/topo/counties-10m.json?v=${ASSET_V}`).then((r) => r.json()),
   ]);
 
-  const { n_time, n_lat, n_lon, lat, lon, time: timeStrs, quant_scale, color } = meta;
+  const { n_time, n_lat, n_lon, lat, lon, time: timeStrs, quant_scale, color_schemes, default_scheme } = meta;
+  let currentScheme = default_scheme;
 
   VIEW_H = VIEW_W * (n_lat / n_lon);
 
@@ -43,15 +44,21 @@
   const latToY = (latVal) => ((latMax - latVal) / (latMax - latMin)) * VIEW_H;
 
   // ---- frame image layer ----
-  const framePaths = d3.range(n_time).map(
-    (t) => `frames/frame_${String(t).padStart(2, "0")}.png?v=${ASSET_V}`
-  );
+  function getFramePaths(schemeId) {
+    return d3.range(n_time).map(
+      (t) => `frames/${schemeId}/frame_${String(t).padStart(2, "0")}.png?v=${ASSET_V}`
+    );
+  }
 
-  // preload all frames so playback doesn't flicker/stall
-  framePaths.forEach((p) => {
-    const img = new Image();
-    img.src = p;
-  });
+  function preloadFrames(paths) {
+    paths.forEach((p) => {
+      const img = new Image();
+      img.src = p;
+    });
+  }
+
+  let framePaths = getFramePaths(currentScheme);
+  preloadFrames(framePaths);
 
   const imageEl = zoomLayer
     .append("image")
@@ -146,8 +153,9 @@
   });
 
   // ---- legend ----
-  {
-    const stops = color.legend_stop_colors;
+  function renderLegend(schemeId) {
+    const schemeColor = color_schemes[schemeId];
+    const stops = schemeColor.legend_stop_colors;
     const gradientCss = `linear-gradient(to right, ${stops
       .map((c, i) => `${c} ${(100 * i) / (stops.length - 1)}%`)
       .join(", ")})`;
@@ -157,12 +165,27 @@
       <div class="legend-gradient" style="background:${gradientCss}"></div>
       <div class="legend-ticks">
         <span>0</span>
-        <span>${(color.vmax / 4).toFixed(1)}</span>
-        <span>${(color.vmax / 2).toFixed(1)}</span>
-        <span>${color.vmax.toFixed(1)}</span>
+        <span>${(schemeColor.vmax / 4).toFixed(1)}</span>
+        <span>${(schemeColor.vmax / 2).toFixed(1)}</span>
+        <span>${schemeColor.vmax.toFixed(1)}</span>
       </div>
     `;
   }
+  renderLegend(currentScheme);
+
+  // ---- colormap selector ----
+  const colormapSelect = document.getElementById("colormap-select");
+  colormapSelect.innerHTML = Object.entries(color_schemes)
+    .map(([id, s]) => `<option value="${id}"${id === currentScheme ? " selected" : ""}>${s.label}</option>`)
+    .join("");
+
+  colormapSelect.addEventListener("change", () => {
+    currentScheme = colormapSelect.value;
+    framePaths = getFramePaths(currentScheme);
+    preloadFrames(framePaths);
+    imageEl.attr("href", framePaths[currentT]);
+    renderLegend(currentScheme);
+  });
 
   // ---- time state / slider / playback ----
   slider.max = n_time - 1;
