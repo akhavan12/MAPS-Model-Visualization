@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>MAPS Output — NDI_total</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header>
+    <h1>New Daily Infections (NDI_total)</h1>
+    <div id="date-label" class="date-label">—</div>
+  </header>
+
+  <div id="map-wrap">
+    <svg id="map"></svg>
+    <div id="legend"></div>
+    <div id="tooltip" class="tooltip hidden"></div>
+    <div id="hint">Scroll/drag to zoom &amp; pan · hover a point for its time series · double-click a point to expand it</div>
+  </div>
+
+  <div id="controls">
+    <button id="play-btn" title="Play/pause">▶</button>
+    <input id="time-slider" type="range" min="0" max="0" value="0" step="1" />
+    <span id="time-index-label"></span>
+    <label class="speed-label">
+      speed
+      <select id="speed-select">
+        <option value="700">slow</option>
+        <option value="350" selected>normal</option>
+        <option value="150">fast</option>
+      </select>
+    </label>
+    <button id="reset-zoom-btn" title="Reset zoom">reset zoom</button>
+    <label class="speed-label">
+      <input type="checkbox" id="county-toggle" checked />
+      counties (zoomed in)
+    </label>
+  </div>
+
+  <div id="detail-modal" class="modal hidden">
+    <div class="modal-panel">
+      <div class="modal-header">
+        <div>
+          <div class="modal-title"></div>
+          <div class="modal-coords"></div>
+        </div>
+        <button id="modal-close-btn" title="Close">✕</button>
+      </div>
+      <svg id="modal-chart"></svg>
+      <div class="modal-hint">Move mouse over the chart to inspect a value · timeline position shown as dashed line</div>
+    </div>
+  </div>
+
+  <script src="lib/d3.v7.min.js"></script>
+  <script src="lib/topojson-client.min.js"></script>
+  <script src="app.js?v=4"></script>
+</body>
+</html>
