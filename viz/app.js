@@ -6,6 +6,7 @@
   const svg = d3.select("#map");
   const mapWrap = document.getElementById("map-wrap");
   const dateLabel = document.getElementById("date-label");
+  const infectiousTotalEl = document.getElementById("infectious-total");
   const tooltip = d3.select("#tooltip");
   const legendEl = document.getElementById("legend");
   const playBtn = document.getElementById("play-btn");
@@ -210,6 +211,8 @@
     currentT = Math.max(0, Math.min(n_time - 1, t));
     imageEl.attr("href", framePaths[currentT]);
     dateLabel.textContent = timeStrs[currentT];
+    const totalInfectious = getTotalInfectious(currentT);
+    infectiousTotalEl.textContent = `Total Infectious: ${totalInfectious.toFixed(0)}`;
     timeIdxLabel.textContent = `step ${currentT + 1} / ${n_time}`;
     if (!fromSlider) slider.value = currentT;
     if (tooltipLonLat) updateTooltipContent(tooltipLonLat.lon, tooltipLonLat.lat, tooltipPixel);
@@ -279,6 +282,15 @@
       series[t] = lookup[t * stride + latIdx * n_lon + lonIdx] / quant_scale;
     }
     return series;
+  }
+
+  function getTotalInfectious(t) {
+    const stride = n_lat * n_lon;
+    let total = 0;
+    for (let i = 0; i < stride; i++) {
+      total += lookup[t * stride + i];
+    }
+    return total / quant_scale;
   }
 
   function getPointData(lonVal, latVal) {

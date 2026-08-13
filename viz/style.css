@@ -23,7 +23,25 @@ h1 {
   color: #16171c;
 }
 
+#timestamp-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 16px;
+  background: #fafafb;
+  border-bottom: 1px solid #e3e4e8;
+}
+
 .date-label {
+  font-size: 20px;
+  font-weight: 500;
+  color: #16171c;
+  font-variant-numeric: tabular-nums;
+}
+
+.infectious-total {
   font-size: 14px;
   color: #6b7280;
   font-variant-numeric: tabular-nums;
