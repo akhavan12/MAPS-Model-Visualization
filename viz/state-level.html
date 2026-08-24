@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>MAPS Output — State-level</title>
+<link rel="stylesheet" href="style.css?v=2" />
+<style>
+#map-wrap { height: 68vh; }
+.state-path {
+  stroke: #4b4d56;
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+  cursor: pointer;
+  transition: opacity 0.08s ease;
+}
+.state-path:hover { stroke: #1c1d24; stroke-width: 2; opacity: 0.92; }
+#loading {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #fafafb;
+  z-index: 10;
+  font-size: 13px;
+  color: #6b7280;
+}
+#loading.hidden { display: none; }
+</style>
+</head>
+<body>
+  <header><h1 id="page-title">MAPS Output — state-level average</h1></header>
+
+  <div id="timestamp-container">
+    <div id="date-label" class="date-label">—</div>
+    <div id="national-avg" class="infectious-total">National mean: —</div>
+    <div id="national-total" class="infectious-total">National total: —</div>
+  </div>
+
+  <div id="map-wrap">
+    <div id="loading">Loading data and assigning grid cells to states…</div>
+    <svg id="map"></svg>
+    <div id="legend"></div>
+    <div id="tooltip" class="tooltip hidden"></div>
+    <div id="hint">Hover a state for its value · use the slider to move through time</div>
+  </div>
+
+  <div id="controls">
+    <button id="play-btn">▶</button>
+    <input id="time-slider" type="range" min="0" max="0" value="0" step="1" />
+    <span id="time-index-label"></span>
+    <label class="speed-label">
+      speed
+      <select id="speed-select">
+        <option value="700">slow</option>
+        <option value="350" selected>normal</option>
+        <option value="150">fast</option>
+      </select>
+    </label>
+    <label class="speed-label">
+      colors
+      <select id="colormap-select"></select>
+    </label>
+    <label class="speed-label">
+      variable
+      <select id="variable-select">
+        <option value="NDI_total">NDI_total</option>
+        <option value="I_total">I_total</option>
+      </select>
+    </label>
+  </div>
+
+  <script src="lib/d3.v7.min.js"></script>
+  <script src="lib/topojson-client.min.js"></script>
+  <script>
+  (async function () {
+    const ASSET_V = "4";
+    const svg = d3.select("#map");
+    const mapWrap = document.getElementById("map-wrap");
+    const loadingEl = document.getElementById("loading");
+    const dateLabel = document.getElementById("date-label");
+    const nationalAvgEl = document.getElementById("national-avg");
+    const nationalTotalEl = document.getElementById("national-total");
+    const tooltip = d3.select("#tooltip");
+    const legendEl = document.getElementById("legend");
+    const playBtn = document.getElementById("play-btn");
+    const slider = document.getElementById("time-slider");
+    const timeIdxLabel = document.getElementById("time-index-label");
+    const speedSelect = document.getElementById("speed-select");
+    const colormapSelect = document.getElementById("colormap-select");
+    const variableSelect = document.getElementById("variable-select");
+    const pageTitle = document.getElementById("page-title");
+
+    // ---- choose variable from URL (?var=I_total or ?var=NDI_total) ----
+    const urlParams = new URLSearchParams(window.location.search);
+    const selectedVar = urlParams.get("var") || "NDI_total";
+    const dataRoot = selectedVar === "I_total" ? "data/itotal" : "data";
+    const lookupFile = selectedVar === "I_total" ? "i_total_lookup" : "ndi_lookup";
+
+    // ---- load selected variable's data ----
+    const [meta, lookupBuf, statesTopo] = await Promise.all([
+      fetch(`${dataRoot}/meta.json?v=${ASSET_V}`).then((r) => r.json()),
+      fetch(`${dataRoot}/${lookupFile}.bin?v=${ASSET_V}`).then((r) => r.arrayBuffer()),
+      fetch(`data/topo/states-10m.json?v=${ASSET_V}`).then((r) => r.json()),
+    ]);
+
+    const lookup = new Int16Array(lookupBuf);
+    const { n_time, n_lat, n_lon, lat, lon, time: timeStrs, quant_scale, color_schemes, default_scheme, lon_min, lon_max, lat_min, lat_max } = meta;
+
+    pageTitle.textContent = `${meta.long_name} — state-level average`;
+    document.title = `${meta.long_name} — state-level`;
+    variableSelect.value = selectedVar;
+
+    const statesGeo = topojson.feature(statesTopo, statesTopo.objects.states);
+
+    // Only keep states whose bounding boxes overlap the data domain (CONUS + DC)
+    const stateFeatures = statesGeo.features.filter((f) => {
+      const [[x0, y0], [x1, y1]] = d3.geoBounds(f);
+      return x1 >= lon_min && x0 <= lon_max && y1 >= lat_min && y0 <= lat_max;
+    });
+    const nStates = stateFeatures.length;
+    const stateBBoxes = stateFeatures.map((f) => d3.geoBounds(f));
+
+    // ---- map projection ----
+    const { width, height } = mapWrap.getBoundingClientRect();
+    const projection = d3.geoAlbersUsa().fitSize([width, height], { type: "FeatureCollection", features: stateFeatures });
+    const path = d3.geoPath(projection);
+    svg.attr("viewBox", `0 0 ${width} ${height}`).attr("preserveAspectRatio", "xMidYMid meet");
+
+    // ---- assign every grid cell to at most one state ----
+    const cellToState = new Int16Array(n_lat * n_lon).fill(-1);
+    for (let i = 0; i < n_lat; i++) {
+      const latVal = lat[i];
+      for (let j = 0; j < n_lon; j++) {
+        const point = [lon[j], latVal];
+        for (let s = 0; s < nStates; s++) {
+          const [[x0, y0], [x1, y1]] = stateBBoxes[s];
+          if (point[0] < x0 || point[0] > x1 || point[1] < y0 || point[1] > y1) continue;
+          if (d3.geoContains(stateFeatures[s], point)) {
+            cellToState[i * n_lon + j] = s;
+            break;
+          }
+        }
+      }
+    }
+
+    // ---- aggregate per-state means and national total for each time step ----
+    loadingEl.textContent = "Aggregating values by state…";
+    const stateMeans = [];
+    const nationalTotals = new Float32Array(n_time);
+    const stride = n_lat * n_lon;
+    for (let t = 0; t < n_time; t++) {
+      const sums = new Float64Array(nStates);
+      const counts = new Uint32Array(nStates);
+      let nationalTotalRaw = 0;
+      for (let c = 0; c < stride; c++) {
+        const s = cellToState[c];
+        if (s < 0) continue;
+        const raw = lookup[t * stride + c];
+        sums[s] += raw;
+        counts[s]++;
+        nationalTotalRaw += raw;
+      }
+      const means = new Float32Array(nStates);
+      for (let s = 0; s < nStates; s++) {
+        means[s] = counts[s] ? (sums[s] / counts[s]) / quant_scale : 0;
+      }
+      stateMeans.push(means);
+      nationalTotals[t] = nationalTotalRaw / quant_scale;
+    }
+    loadingEl.classList.add("hidden");
+
+    // max over all state-time means — colors will span the full palette from 0 to this value
+    const stateMax = d3.max(stateMeans, (means) => d3.max(means));
+
+    // ---- color scale ----
+    let currentScheme = default_scheme;
+    function getColorScale(schemeId) {
+      const s = color_schemes[schemeId];
+      return d3.scaleQuantize().domain([0, stateMax]).range(s.legend_stop_colors);
+    }
+    let colorScale = getColorScale(currentScheme);
+
+    // ---- draw states ----
+    const statesLayer = svg.append("g");
+    const statePaths = statesLayer
+      .selectAll("path")
+      .data(stateFeatures)
+      .join("path")
+      .attr("class", "state-path")
+      .attr("d", path);
+
+    let currentT = 0;
+    function fillStates() {
+      statePaths.attr("fill", (d, i) => {
+        const v = stateMeans[currentT][i];
+        return v > 0 ? colorScale(v) : "#e9eaed";
+      });
+    }
+
+    // ---- legend ----
+    function renderLegend() {
+      const s = color_schemes[currentScheme];
+      const gradientCss = `linear-gradient(to right, ${s.legend_stop_colors
+        .map((c, i) => `${c} ${(100 * i) / (s.legend_stop_colors.length - 1)}%`)
+        .join(", ")})`;
+      legendEl.innerHTML = `
+        <div class="legend-title">${meta.long_name} — state mean</div>
+        <div class="legend-gradient" style="background:${gradientCss}"></div>
+        <div class="legend-ticks">
+          <span>0</span>
+          <span>${(stateMax / 4).toFixed(1)}</span>
+          <span>${(stateMax / 2).toFixed(1)}</span>
+          <span>${stateMax.toFixed(1)}</span>
+        </div>
+      `;
+    }
+    renderLegend();
+
+    // ---- time / playback ----
+    slider.max = n_time - 1;
+    let playing = false;
+    let timer = null;
+
+    function computeNationalAvg(t) {
+      const arr = stateMeans[t];
+      let total = 0;
+      let count = 0;
+      for (let s = 0; s < nStates; s++) {
+        if (arr[s] > 0) {
+          total += arr[s];
+          count++;
+        }
+      }
+      return count ? total / count : 0;
+    }
+
+    function setTime(t, { fromSlider = false } = {}) {
+      currentT = Math.max(0, Math.min(n_time - 1, t));
+      fillStates();
+      dateLabel.textContent = timeStrs[currentT];
+      nationalAvgEl.textContent = `National mean: ${computeNationalAvg(currentT).toFixed(3)}`;
+      nationalTotalEl.textContent = `National total: ${nationalTotals[currentT].toFixed(0)}`;
+      timeIdxLabel.textContent = `step ${currentT + 1} / ${n_time}`;
+      if (!fromSlider) slider.value = currentT;
+    }
+
+    slider.addEventListener("input", () => setTime(+slider.value, { fromSlider: true }));
+
+    function startPlaying() {
+      playing = true;
+      playBtn.textContent = "⏸";
+      clearInterval(timer);
+      timer = setInterval(() => {
+        let next = currentT + 1;
+        if (next >= n_time) next = 0;
+        setTime(next);
+      }, +speedSelect.value);
+    }
+
+    function stopPlaying() {
+      playing = false;
+      playBtn.textContent = "▶";
+      clearInterval(timer);
+    }
+
+    playBtn.addEventListener("click", () => (playing ? stopPlaying() : startPlaying()));
+    speedSelect.addEventListener("change", () => {
+      if (playing) startPlaying();
+    });
+
+    // ---- colormap selector ----
+    colormapSelect.innerHTML = Object.entries(color_schemes)
+      .map(([id, s]) => `<option value="${id}"${id === currentScheme ? " selected" : ""}>${s.label}</option>`)
+      .join("");
+
+    colormapSelect.addEventListener("change", () => {
+      currentScheme = colormapSelect.value;
+      colorScale = getColorScale(currentScheme);
+      fillStates();
+      renderLegend();
+    });
+
+    variableSelect.addEventListener("change", (e) => {
+      window.location.href = `state-level.html?var=${e.target.value}`;
+    });
+
+    // ---- tooltips ----
+    const wrapRect = () => mapWrap.getBoundingClientRect();
+    statePaths
+      .on("mousemove", function (event, d) {
+        const i = stateFeatures.indexOf(d);
+        const v = stateMeans[currentT][i];
+        const rect = wrapRect();
+        tooltip
+          .classed("hidden", false)
+          .style("left", `${event.clientX - rect.left + 12}px`)
+          .style("top", `${event.clientY - rect.top + 12}px`)
+          .html(`
+            <div class="tt-title">${d.properties.name}</div>
+            <div class="tt-sub">${timeStrs[currentT]} · <span class="tt-value">${v.toFixed(3)}</span></div>
+          `);
+      })
+      .on("mouseleave", () => tooltip.classed("hidden", true));
+
+    setTime(0);
+  })();
+  </script>
+</body>
+</html>
