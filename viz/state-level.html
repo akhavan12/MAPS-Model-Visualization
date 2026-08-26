@@ -98,16 +98,17 @@
     const lookupFile = selectedVar === "I_total" ? "i_total_lookup" : "ndi_lookup";
 
     // ---- load selected variable's data ----
-    const [meta, lookupBuf, statesTopo] = await Promise.all([
+    const [meta, lookupBuf, statesTopo, statePops] = await Promise.all([
       fetch(`${dataRoot}/meta.json?v=${ASSET_V}`).then((r) => r.json()),
       fetch(`${dataRoot}/${lookupFile}.bin?v=${ASSET_V}`).then((r) => r.arrayBuffer()),
       fetch(`data/topo/states-10m.json?v=${ASSET_V}`).then((r) => r.json()),
+      fetch(`data/state_pops.json?v=${ASSET_V}`).then((r) => r.json()),
     ]);
 
     const lookup = new Int16Array(lookupBuf);
     const { n_time, n_lat, n_lon, lat, lon, time: timeStrs, quant_scale, color_schemes, default_scheme, lon_min, lon_max, lat_min, lat_max } = meta;
 
-    pageTitle.textContent = `${meta.long_name} — state-level average`;
+    pageTitle.textContent = `${meta.long_name} — state-level total`;
     document.title = `${meta.long_name} — state-level`;
     variableSelect.value = selectedVar;
 
@@ -120,6 +121,8 @@
     });
     const nStates = stateFeatures.length;
     const stateBBoxes = stateFeatures.map((f) => d3.geoBounds(f));
+    const popByName = statePops;
+    const totalPop = stateFeatures.reduce((sum, f) => sum + (popByName[f.properties.name] || 0), 0);
 
     // ---- map projection ----
     const { width, height } = mapWrap.getBoundingClientRect();
@@ -144,40 +147,47 @@
       }
     }
 
-    // ---- aggregate per-state means and national total for each time step ----
+    // ---- aggregate per-state totals and national total for each time step ----
     loadingEl.textContent = "Aggregating values by state…";
-    const stateMeans = [];
+    const stateSums = [];
+    const stateRates = [];
     const nationalTotals = new Float32Array(n_time);
     const stride = n_lat * n_lon;
     for (let t = 0; t < n_time; t++) {
       const sums = new Float64Array(nStates);
-      const counts = new Uint32Array(nStates);
       let nationalTotalRaw = 0;
       for (let c = 0; c < stride; c++) {
         const s = cellToState[c];
         if (s < 0) continue;
         const raw = lookup[t * stride + c];
         sums[s] += raw;
-        counts[s]++;
         nationalTotalRaw += raw;
       }
-      const means = new Float32Array(nStates);
+      const sumsArr = new Float32Array(nStates);
+      const ratesArr = new Float32Array(nStates);
       for (let s = 0; s < nStates; s++) {
-        means[s] = counts[s] ? (sums[s] / counts[s]) / quant_scale : 0;
+        const val = sums[s] / quant_scale;
+        const pop = popByName[stateFeatures[s].properties.name] || 0;
+        sumsArr[s] = val;
+        ratesArr[s] = pop ? val / pop : 0;
       }
-      stateMeans.push(means);
+      stateSums.push(sumsArr);
+      stateRates.push(ratesArr);
       nationalTotals[t] = nationalTotalRaw / quant_scale;
     }
     loadingEl.classList.add("hidden");
 
-    // max over all state-time means — colors will span the full palette from 0 to this value
-    const stateMax = d3.max(stateMeans, (means) => d3.max(means));
-
-    // ---- color scale ----
+    // ---- color scale (fixed 1-in-X thresholds) ----
+    const RATE_THRESHOLDS = [1 / 100, 1 / 50, 1 / 30, 1 / 10];
     let currentScheme = default_scheme;
-    function getColorScale(schemeId) {
+    function getCategoryColors(schemeId) {
       const s = color_schemes[schemeId];
-      return d3.scaleQuantize().domain([0, stateMax]).range(s.legend_stop_colors);
+      const n = s.legend_stop_colors.length;
+      const indices = [0, Math.floor(n / 4), Math.floor(n / 2), Math.floor(3 * n / 4), n - 1];
+      return indices.map((i) => s.legend_stop_colors[Math.min(i, n - 1)]);
+    }
+    function getColorScale(schemeId) {
+      return d3.scaleThreshold().domain(RATE_THRESHOLDS).range(getCategoryColors(schemeId));
     }
     let colorScale = getColorScale(currentScheme);
 
@@ -193,25 +203,23 @@
     let currentT = 0;
     function fillStates() {
       statePaths.attr("fill", (d, i) => {
-        const v = stateMeans[currentT][i];
+        const v = stateRates[currentT][i];
         return v > 0 ? colorScale(v) : "#e9eaed";
       });
     }
 
     // ---- legend ----
+    const CATEGORY_LABELS = ["> 1 in 100", "1 in 100", "1 in 50", "1 in 30", "1 in 10"];
     function renderLegend() {
-      const s = color_schemes[currentScheme];
-      const gradientCss = `linear-gradient(to right, ${s.legend_stop_colors
-        .map((c, i) => `${c} ${(100 * i) / (s.legend_stop_colors.length - 1)}%`)
+      const colors = getCategoryColors(currentScheme);
+      const gradientCss = `linear-gradient(to right, ${colors
+        .map((c, i) => `${c} ${(100 * i) / (colors.length - 1)}%`)
         .join(", ")})`;
       legendEl.innerHTML = `
-        <div class="legend-title">${meta.long_name} — state mean</div>
+        <div class="legend-title">Infection rate</div>
         <div class="legend-gradient" style="background:${gradientCss}"></div>
         <div class="legend-ticks">
-          <span>0</span>
-          <span>${(stateMax / 4).toFixed(1)}</span>
-          <span>${(stateMax / 2).toFixed(1)}</span>
-          <span>${stateMax.toFixed(1)}</span>
+          ${CATEGORY_LABELS.map((label) => `<span>${label}</span>`).join("")}
         </div>
       `;
     }
@@ -222,24 +230,17 @@
     let playing = false;
     let timer = null;
 
-    function computeNationalAvg(t) {
-      const arr = stateMeans[t];
-      let total = 0;
-      let count = 0;
-      for (let s = 0; s < nStates; s++) {
-        if (arr[s] > 0) {
-          total += arr[s];
-          count++;
-        }
-      }
-      return count ? total / count : 0;
+    function formatRate(rate) {
+      if (rate <= 0) return "—";
+      return `1 in ${Math.round(1 / rate)}`;
     }
 
     function setTime(t, { fromSlider = false } = {}) {
       currentT = Math.max(0, Math.min(n_time - 1, t));
       fillStates();
       dateLabel.textContent = timeStrs[currentT];
-      nationalAvgEl.textContent = `National mean: ${computeNationalAvg(currentT).toFixed(3)}`;
+      const nationalRate = totalPop ? nationalTotals[currentT] / totalPop : 0;
+      nationalAvgEl.textContent = `National rate: ${formatRate(nationalRate)}`;
       nationalTotalEl.textContent = `National total: ${nationalTotals[currentT].toFixed(0)}`;
       timeIdxLabel.textContent = `step ${currentT + 1} / ${n_time}`;
       if (!fromSlider) slider.value = currentT;
@@ -290,7 +291,8 @@
     statePaths
       .on("mousemove", function (event, d) {
         const i = stateFeatures.indexOf(d);
-        const v = stateMeans[currentT][i];
+        const total = stateSums[currentT][i];
+        const rate = stateRates[currentT][i];
         const rect = wrapRect();
         tooltip
           .classed("hidden", false)
@@ -298,7 +300,8 @@
           .style("top", `${event.clientY - rect.top + 12}px`)
           .html(`
             <div class="tt-title">${d.properties.name}</div>
-            <div class="tt-sub">${timeStrs[currentT]} · <span class="tt-value">${v.toFixed(3)}</span></div>
+            <div class="tt-sub">${timeStrs[currentT]} · total: <span class="tt-value">${total.toFixed(0)}</span></div>
+            <div class="tt-sub">rate: <span class="tt-value">${formatRate(rate)}</span></div>
           `);
       })
       .on("mouseleave", () => tooltip.classed("hidden", true));
