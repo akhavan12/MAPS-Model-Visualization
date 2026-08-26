@@ -155,6 +155,7 @@
     loadingEl.textContent = "Aggregating values by state…";
     const stateSums = [];
     const stateRates = [];
+    const upScale = meta.stride * meta.stride;
     const nationalTotals = new Float32Array(n_time);
     const stride = n_lat * n_lon;
     for (let t = 0; t < n_time; t++) {
@@ -170,14 +171,14 @@
       const sumsArr = new Float32Array(nStates);
       const ratesArr = new Float32Array(nStates);
       for (let s = 0; s < nStates; s++) {
-        const val = sums[s] / quant_scale;
+        const val = (sums[s] / quant_scale) * upScale;
         const pop = popByName[stateFeatures[s].properties.name] || 0;
         sumsArr[s] = val;
         ratesArr[s] = pop ? val / pop : 0;
       }
       stateSums.push(sumsArr);
       stateRates.push(ratesArr);
-      nationalTotals[t] = nationalTotalRaw / quant_scale;
+      nationalTotals[t] = (nationalTotalRaw / quant_scale) * upScale;
     }
     loadingEl.classList.add("hidden");
 
