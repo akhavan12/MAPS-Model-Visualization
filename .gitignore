@@ -227,3 +227,12 @@ maps_output_F1_06_21_2026_kepler.csv
 # viz/lib is our own bundled JS libs (d3, topojson-client), not a Python lib/ build artifact
 !viz/lib/
 !viz/lib/*.js
+
+# Large netCDF-4 files (often exceed GitHub's 100MB limit)
+*.nc4
+
+# Claude / AI assistant artifacts
+AUTOMATION_*.md
+automation.md
+DATA_FLOW_EXPLANATION.md
+AI_*.md
