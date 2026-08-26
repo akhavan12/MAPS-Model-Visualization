@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MAPS Model Visualizations</title>
+  <style>
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background: #f7f8fa;
+      color: #1c1d24;
+    }
+    body {
+      display: flex;
+      flex-direction: column;
+    }
+    .top-bar {
+      padding: 16px 20px 0;
+      background: #fff;
+      border-bottom: 1px solid #e5e7eb;
+    }
+    .top-bar h1 {
+      margin: 0 0 12px;
+      font-size: 18px;
+      font-weight: 600;
+      color: #111827;
+    }
+    .tabs {
+      display: flex;
+      gap: 4px;
+    }
+    .tab-button {
+      padding: 10px 18px;
+      font-size: 14px;
+      font-weight: 500;
+      color: #4b5563;
+      background: #f3f4f6;
+      border: 1px solid #e5e7eb;
+      border-bottom: none;
+      border-radius: 8px 8px 0 0;
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s;
+    }
+    .tab-button:hover {
+      background: #e5e7eb;
+      color: #111827;
+    }
+    .tab-button.active {
+      background: #2563eb;
+      color: #fff;
+      border-color: #2563eb;
+    }
+    .description {
+      padding: 12px 20px;
+      font-size: 13px;
+      line-height: 1.5;
+      color: #4b5563;
+      background: #fff;
+      border-bottom: 1px solid #e5e7eb;
+    }
+    .description strong {
+      color: #111827;
+    }
+    .viz-frame {
+      flex: 1 1 auto;
+      width: 100%;
+      min-height: 0;
+      border: none;
+      background: #fff;
+    }
+  </style>
+</head>
+<body>
+  <div class="top-bar">
+    <h1>MAPS Model Visualizations</h1>
+    <div class="tabs" role="tablist" aria-label="Visualization tabs">
+      <button class="tab-button active" role="tab" aria-selected="true" data-target="index.html" data-desc="<strong>Contour Map</strong> — a time-aware contour visualization of the selected variable over the continental U.S. Use the slider to move through time and switch color schemes.">
+        Contour Map
+      </button>
+      <button class="tab-button" role="tab" aria-selected="false" data-target="state-level.html" data-desc="<strong>State-level Average</strong> — a state-by-state choropleth that shows the average value for each state and reports the national mean and total. Use the dropdown inside to switch between NDI_total and I_total.">
+        State-level Average
+      </button>
+    </div>
+  </div>
+
+  <div id="description" class="description"></div>
+  <iframe id="viz-frame" class="viz-frame" src="index.html" title="Visualization"></iframe>
+
+  <script>
+    const frame = document.getElementById('viz-frame');
+    const desc = document.getElementById('description');
+    const tabs = document.querySelectorAll('.tab-button');
+
+    function switchTab(tab) {
+      tabs.forEach((t) => {
+        t.classList.remove('active');
+        t.setAttribute('aria-selected', 'false');
+      });
+      tab.classList.add('active');
+      tab.setAttribute('aria-selected', 'true');
+
+      frame.src = tab.dataset.target;
+      desc.innerHTML = tab.dataset.desc;
+    }
+
+    tabs.forEach((tab) => {
+      tab.addEventListener('click', () => switchTab(tab));
+    });
+
+    // initialize description from the default active tab
+    switchTab(document.querySelector('.tab-button.active'));
+  </script>
+</body>
+</html>
